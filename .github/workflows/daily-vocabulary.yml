@@ -1,0 +1,28 @@
+name: 每日生成三語詞彙
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 12 * * *'
+      timezone: 'Asia/Hong_Kong'
+permissions:
+  contents: read
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 安裝 Python 套件
+        run: pip install -r requirements-generator.txt
+      - name: 生成今日詞彙並存入 Turso
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          TURSO_DRIVER: ${{ vars.TURSO_DRIVER || 'libsql' }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash-lite' }}
+          APP_TIMEZONE: Asia/Hong_Kong
+        run: python generate_daily.py
