@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#143a34" />
+  <meta name="description" content="每天英語、日語、西班牙語各10個新詞，繁體中文解釋、發音及間隔複習。" />
+  <link rel="manifest" href="/static/manifest.webmanifest" />
+  <link rel="icon" href="/static/icon-192.png" type="image/png" />
+  <link rel="stylesheet" href="/static/app.css" />
+  <title>三語日課 · TriWords</title>
+</head>
+<body>
+  <div id="login" class="login-screen" hidden>
+    <div class="login-panel">
+      <div class="logo-mark">文</div>
+      <p class="eyebrow">TRIWORDS DAILY</p>
+      <h1>三語日課</h1>
+      <p class="muted">每天30個新詞，循序漸進累積三語詞彙。</p>
+      <form id="login-form">
+        <label for="password">個人登入密碼</label>
+        <input id="password" type="password" minlength="12" autocomplete="current-password" placeholder="輸入你在 Vercel 設定的密碼" required />
+        <button type="submit" class="primary wide">登入學習</button>
+      </form>
+      <p class="subnote">你的詞彙和複習紀錄儲存在 Turso；密碼不會儲存在瀏覽器本地。</p>
+    </div>
+  </div>
+
+  <div id="shell" class="shell" hidden>
+    <header class="topbar">
+      <div class="brand"><span class="brand-icon">文</span><span>三語日課 <small>TRIWORDS</small></span></div>
+      <span class="today-date" id="date-label"></span>
+    </header>
+    <main class="content">
+      <div id="notice" class="notice" hidden role="status"></div>
+      <div id="main-view"></div>
+    </main>
+    <nav class="bottom-nav" aria-label="主要功能">
+      <button type="button" data-tab="today" class="active"><span class="nav-symbol">⌂</span>今日</button>
+      <button type="button" data-tab="review"><span class="nav-symbol">↻</span>複習</button>
+      <button type="button" data-tab="library"><span class="nav-symbol">▤</span>詞庫</button>
+      <button type="button" data-tab="settings"><span class="nav-symbol">⚙</span>設定</button>
+    </nav>
+  </div>
+  <script defer src="/static/app.js"></script>
+</body>
+</html>
