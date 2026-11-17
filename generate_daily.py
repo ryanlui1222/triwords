@@ -5,6 +5,8 @@ import argparse
 from datetime import datetime, timezone
 import json
 import os
+import random
+import time
 import uuid
 from zoneinfo import ZoneInfo
 
@@ -27,18 +29,32 @@ def existing_day(lang, day):
         return conn.execute('SELECT COUNT(*) FROM daily_lessons WHERE lesson_date=? AND language=?', (day,lang)).fetchone()[0]
 
 def generated_words(client, model, lang, exclusions):
-    from google.genai import types
+    from google.genai import types, errors
     long_name,level,focus=LANGS[lang]
     prompt = f'''You are a precise language educator creating a daily personal flashcard set. Create 15 DIFFERENT candidate terms (the system will select 10) in {long_name} at {level}.
 Focus: {focus}. No fake words. Choose words useful for authentic language learning; Japanese use natural kanji/kana when appropriate, Spanish include accent marks and correct inflections.
 Avoid terms already studied: {json.dumps(exclusions[:250],ensure_ascii=False)}.
 Return ONLY JSON object {{"words": [{{"term":"...","reading":"...","part_of_speech":"...","meaning_zh":"...","example":"...","example_zh":"...","level":"...","topic":"..."}}]}}.
 Requirements: exactly 15 objects; all meaning_zh and example_zh in Traditional Chinese (繁體中文); one accurate, idiomatic {long_name} original example for each; examples and translations must agree; include reasonable word class. 'reading' is IPA for English, kana for Japanese, optional pronunciation hint for Spanish. Do not add Markdown.'''
-    response=client.models.generate_content(
-        model=model,
-        contents=prompt,
-        config=types.GenerateContentConfig(response_mime_type='application/json',temperature=0.65)
-    )
+    # Gemini may temporarily return HTTP 503 when the model is under heavy load.
+    # The SDK has its own retries; this outer retry gives a scheduled job
+    # a few more chances without risking an unbounded loop.
+    for attempt in range(1, 4):
+        try:
+            response = client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type='application/json', temperature=0.65
+                ),
+            )
+            break
+        except errors.ServerError as exc:
+            if getattr(exc, 'code', None) not in (500, 502, 503, 504) or attempt == 3:
+                raise
+            delay = (8 if attempt == 1 else 20) + random.uniform(0, 2)
+            print(f'{lang}: Gemini 暫時不可用（{exc.code}），{delay:.0f} 秒後重試 ({attempt}/2)', flush=True)
+            time.sleep(delay)
     data=json.loads(response.text or '{}')
     if not isinstance(data,dict) or not isinstance(data.get('words'),list):
         raise RuntimeError(f'{lang}: Gemini 未回傳正確詞彙 JSON')
@@ -87,14 +103,14 @@ def run(day=None):
     for lang in LANGS:
         n=existing_day(lang,day)
         if n==10:
-            print(day,lang,'已存在10詞，略過');continue
+            print(day,lang,'已存在10詞，略過',flush=True);continue
         if n:
             raise RuntimeError(f'{lang} 詞包不完整：{n}詞；停止避免重複')
         prev=existing_terms(lang)
-        candidates=generated_words(client,os.getenv('GEMINI_MODEL','gemini-2.5-flash-lite'),lang,prev)
+        candidates=generated_words(client,os.getenv('GEMINI_MODEL','gemini-3.5-flash-lite'),lang,prev)
         words=validate(candidates,lang,prev)
         result=save_words(day,lang,words)
-        print(day,lang,result,'10詞')
+        print(day,lang,result,'10詞',flush=True)
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser()
