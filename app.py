@@ -20,7 +20,10 @@ import db
 
 ROOT = Path(__file__).resolve().parent
 app = FastAPI(title="三語日課 API", docs_url=None, redoc_url=None)
-app.mount('/static',StaticFiles(directory=str(ROOT/'public')),name='static')
+# Vercel serves public/static/* via its CDN. Do not force a public/ directory
+# to exist inside the Python function bundle at import time.
+if not os.getenv('VERCEL'):
+    app.mount('/static', StaticFiles(directory=str(ROOT / 'public')), name='static')
 
 def current_date():
     return datetime.now(ZoneInfo(os.getenv('APP_TIMEZONE','Asia/Hong_Kong'))).date().isoformat()
