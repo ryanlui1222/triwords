@@ -22,8 +22,10 @@ def seed(target_date=None):
         for word in demo:
             lang=word['lang']; counts[lang]+=1
             word_id=str(uuid.uuid5(uuid.NAMESPACE_DNS,f"demo:{lang}:{word['term']}"))
-            conn.execute('INSERT OR IGNORE INTO vocabulary(id,language,term,reading,part_of_speech,meaning_zh,example,example_zh,level,topic,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)', (word_id,lang,word['term'],word['reading'],word['part_of_speech'],word['meaning_zh'],word['example'],word['example_zh'], {'en':'C1','ja':'N2','es':'A2'}[lang], 'demo', now))
+            conn.execute('INSERT OR IGNORE INTO vocabulary(id,language,term,reading,part_of_speech,meaning_zh,example,example_zh,level,topic,created_at,normalized_term) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)', (word_id,lang,word['term'],word['reading'],word['part_of_speech'],word['meaning_zh'],word['example'],word['example_zh'], {'en':'C1','ja':'N2','es':'A2'}[lang], 'demo', now, db.normalize(word['term'])))
+            conn.execute('INSERT OR IGNORE INTO term_registry(language,normalized_term,word_id,registered_at) VALUES(?,?,?,?)',(lang,db.normalize(word['term']),word_id,now))
             conn.execute('INSERT OR IGNORE INTO daily_lessons(lesson_date,language,word_id,ordinal) VALUES(?,?,?,?)', (day,lang,word_id,counts[lang]))
+    db.init_db()  # Rebuild the permanent term registry for newly seeded words.
     print(f'示範詞包：{day}，英文／日文／西文各10詞。')
 
 if __name__=='__main__':

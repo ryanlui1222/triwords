@@ -1,130 +1,68 @@
 'use strict';
-// Vanilla JavaScript: no npm, no framework, no AI secrets in the browser.
-const state={tab:'today', lang:'all', date:'', selected:0, revealed:false, words:[], stats:null, q:'', bookmarked:false, page:0, speed: Number(localStorage.getItem('speechSpeed')||'0.88')};
-const $=(id)=>document.getElementById(id);
-const escapeHTML=(v)=>String(v??'').replace(/[&<>"']/g, x=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x]));
-const langs={en:'English',ja:'日本語',es:'Español'};
-const voiceLangs={en:'en-US',ja:'ja-JP',es:'es-ES'};
-let toastTimer;
-function notice(msg){const n=$('notice');n.textContent=msg;n.hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>n.hidden=true,6800)}
-async function api(url, options={}){
-  let response;
-  try{response=await fetch(url,{...options,credentials:'same-origin',headers:{'Content-Type':'application/json',...(options.headers||{})}})}
-  catch{throw new Error('無法連線。請檢查網絡或稍後重試。')}
-  let body={};try{body=await response.json()}catch{}
-  if(response.status===401){showLogin();throw new Error(body.detail||'登入已過期，請重新登入。')}
-  if(!response.ok)throw new Error(typeof body.detail==='string'?body.detail:`伺服器錯誤：${response.status}`);
-  return body;
+// TriWords v0.2: no AI keys in the browser. All writes require a signed login cookie.
+const state={tab:'today',lang:'all',date:'',selected:0,revealed:false,words:[],stats:null,q:'',bookmarked:false,page:0,libraryStatus:'active',speed:Number(localStorage.getItem('speechSpeed')||'0.88'),editId:null};
+const $=id=>document.getElementById(id);
+const esc=v=>String(v??'').replace(/[&<>"']/g,s=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
+const langNames={en:'English',ja:'日本語',es:'Español'};
+const speechCodes={en:'en-US',ja:'ja-JP',es:'es-ES'};
+let noticeTimeout;
+function toast(message){const n=$('notice');n.textContent=message;n.hidden=false;clearTimeout(noticeTimeout);noticeTimeout=setTimeout(()=>n.hidden=true,8000)}
+async function api(url,options={}){
+ let response;try{response=await fetch(url,{...options,credentials:'same-origin',headers:{'Content-Type':'application/json',...(options.headers||{})}})}
+ catch{throw new Error('無法連接伺服器，請檢查網絡。')}
+ let body={};try{body=await response.json()}catch{}
+ if(response.status===401){showLogin();throw new Error(body.detail||'登入已過期')}
+ if(!response.ok){const detail=body.detail;throw new Error(typeof detail==='string'?detail:(detail?.message||`伺服器錯誤 ${response.status}`))}
+ return body;
 }
-function showLogin(){ $('shell').hidden=true;$('login').hidden=false;$('password').value=''; }
-function showApp(){ $('login').hidden=true;$('shell').hidden=false; }
-async function init(){
-  try{const me=await api('/api/me');state.date=me.today;$('date-label').textContent=me.today;showApp();await reload()}
-  catch(e){showLogin();if(!String(e.message).includes('請先登入'))notice(e.message)}
-}
-$('login-form').addEventListener('submit',async e=>{
-  e.preventDefault();const btn=e.target.querySelector('button');btn.disabled=true;
-  try{await api('/api/login',{method:'POST',body:JSON.stringify({password:$('password').value})});await init()}
-  catch(err){alert(err.message)}finally{btn.disabled=false}
-});
-
-function buttons(){return `<div class="lang-tabs">${[['all','全部'],['en','英語'],['ja','日語'],['es','西班牙語']].map(([id,label])=>`<button class="chip ${state.lang===id?'selected':''}" type="button" data-lang="${id}">${label}</button>`).join('')}</div>`}
-function header(title, description, right=''){
- return `<div class="page-heading"><div><h1>${escapeHTML(title)}</h1><div class="muted small">${escapeHTML(description)}</div></div>${right}</div>`;
-}
-function statsHtml(){const a=state.stats||{new_words:0,due_reviews:0,studied_today:0};return `<div class="stats"><div class="stat"><strong>${a.new_words}</strong><span>當日新詞</span></div><div class="stat"><strong>${a.studied_today}</strong><span>當日已練習</span></div><div class="stat"><strong>${a.due_reviews}</strong><span>待複習</span></div></div>`}
-function ratingHTML(){return `<div class="rating-title">這個詞，你記得多少？</div><div class="rating-buttons"><button class="rating again" data-rating="again">忘記</button><button class="rating hard" data-rating="hard">困難</button><button class="rating good" data-rating="good">記得</button><button class="rating easy" data-rating="easy">容易</button></div>`}
-function cardHTML(w){
- const language=langs[w.language]||w.language;
- return `<section class="card flashcard"><div class="card-head"><span class="tag">${escapeHTML(language)} · ${escapeHTML(w.level)}</span><div class="row-actions"><button class="icon-btn ${w.bookmarked?'is-saved':''}" data-bookmark="${escapeHTML(w.id)}" data-enabled="${w.bookmarked?'false':'true'}" title="收藏">${w.bookmarked?'★':'☆'}</button><span class="tag light">${w.practiced?'已練習':'新詞'}</span></div></div>
- <h2 class="term">${escapeHTML(w.term)}</h2><div class="reading">${escapeHTML(w.reading)}</div>
- <div class="pronounce-row"><button class="secondary" data-speak="term">▶ 朗讀單字</button>${state.revealed?'<button class="secondary" data-speak="example">▶ 朗讀例句</button>':''}</div>
- ${state.revealed?`<div class="answer"><strong>${escapeHTML(w.meaning_zh)}</strong><p class="muted small">${escapeHTML(w.part_of_speech)}</p><p class="example">${escapeHTML(w.example)}</p><p class="translation">${escapeHTML(w.example_zh)}</p></div>`:'<div class="hint">先回想詞義，再揭示答案</div>'}
- <div class="spacer"></div><button class="outline wide" data-reveal="1">${state.revealed?'隱藏答案':'顯示答案與例句'}</button>
- ${state.revealed?ratingHTML():''}</section>`;
-}
-function render(){
-  document.querySelectorAll('[data-tab]').forEach(n=>n.classList.toggle('active',n.dataset.tab===state.tab));
-  const root=$('main-view');
-  if(state.tab==='today'){
-    const dayBox=`<input class="date-input" aria-label="詞包日期" type="date" value="${escapeHTML(state.date)}" id="lesson-date"/>`;
-    root.innerHTML=header('每日新詞','英、日、西各10詞 · 點擊卡片開始學習', dayBox)+statsHtml()+buttons()+renderCardArea();
-  }else if(state.tab==='review'){
-    root.innerHTML=header('間隔複習','根據每次評分，自動安排下次重溫')+statsHtml()+buttons()+renderCardArea();
-  }else if(state.tab==='library'){
-    root.innerHTML=header('我的詞庫','搜尋、收藏並隨時重讀已學單字')+buttons()+`<div class="search-row"><input id="search" class="search-input" aria-label="搜尋詞彙" placeholder="搜尋單字或中文釋義..." value="${escapeHTML(state.q)}"/><button class="outline" data-search="1">搜尋</button></div><label class="check-row"><input id="star-only" type="checkbox" ${state.bookmarked?'checked':''}/> 只顯示收藏詞彙</label>`+renderLibrary();
-  }else{
-    root.innerHTML=header('設定','個人化學習與使用說明')+`<section class="setting-card"><h3>每日詞彙</h3><p>英語10詞（C1–C2）、日語10詞（N2–N1）、西班牙語10詞（A2–B1）。每次打開網頁時讀取已生成的詞包；不會推送通知。</p><p>每日產詞時間及模型可在 GitHub Actions 和環境變數中調整。</p></section><section class="setting-card"><h3>朗讀速度</h3><label for="speech-rate">語速：<span id="speed-label">${state.speed.toFixed(2)}×</span></label><input type="range" id="speech-rate" min="0.65" max="1.2" step="0.05" value="${state.speed}"/><p>朗讀採用手機或瀏覽器可使用的系統聲音。初次使用日語或西班牙語時，請確認裝置安裝了該語言的語音資源。</p></section><section class="setting-card"><h3>加入 Android 主畫面</h3><p>使用 Chrome 開啟部署後的網址，透過選單選擇「安裝應用程式」或「加入主畫面」（實際名稱視手機和瀏覽器而定）。此版本需要網絡讀取及保存學習資料。</p></section><section class="setting-card"><h3>帳號安全</h3><p>單人密碼登入；Turso 與 Gemini 金鑰只在伺服器及 GitHub Secrets 保存，不會傳至瀏覽器。</p><button class="outline" data-logout="1">登出</button></section>`;
-  }
-}
-function renderCardArea(){
- if(!state.words.length){return `<div class="empty">${state.tab==='review'?'目前沒有到期的單字。完成今日新詞後，日後會自動排入複習。':'這個日期目前沒有詞包。請先執行示範資料或到 GitHub Actions 手動執行每日生成。'}</div>`}
- state.selected=Math.max(0,Math.min(state.selected,state.words.length-1));
- const w=state.words[state.selected];
- return `<div class="toolbar"><span class="small">${state.tab==='review'?'到期詞彙':'詞彙'} ${state.selected+1} / ${state.words.length}</span><span class="small">${escapeHTML(langs[w.language])}</span></div>`+cardHTML(w)+`<div class="card-nav"><button class="secondary" data-move="-1" ${state.selected<=0?'disabled':''}>← 上一張</button><button class="secondary" data-move="1" ${state.selected>=state.words.length-1?'disabled':''}>下一張 →</button></div>`;
-}
-function renderLibrary(){
- if(!state.words.length)return '<div class="empty">找不到符合條件的單字。<p class="small">你可以切換語言或取消收藏篩選。</p></div>';
- return `<div class="toolbar"><span class="small">第 ${state.page+1} 頁 · 每頁最多100詞</span></div>`+state.words.map(w=>`<article class="list-card"><div class="line-between"><div><span class="tag light">${escapeHTML(langs[w.language])}</span> <span class="list-word">${escapeHTML(w.term)}</span></div><div class="row-actions"><button class="icon-btn" data-library-speak="${escapeHTML(w.id)}" title="朗讀">▶</button><button class="icon-btn ${w.bookmarked?'is-saved':''}" data-bookmark="${escapeHTML(w.id)}" data-enabled="${w.bookmarked?'false':'true'}" title="收藏">${w.bookmarked?'★':'☆'}</button></div></div><div class="list-meaning">${escapeHTML(w.meaning_zh)}</div><details><summary>例句和讀音</summary><div class="details-body">${escapeHTML(w.reading)}<p>${escapeHTML(w.example)}</p><p class="muted">${escapeHTML(w.example_zh)}</p></div></details></article>`).join('')+`<div class="card-nav"><button class="secondary" data-page="-1" ${state.page===0?'disabled':''}>上一頁</button><button class="secondary" data-page="1" ${state.words.length<100?'disabled':''}>下一頁</button></div>`;
-}
-async function reload(){
-  try{
-    if(state.tab==='today'){
-      const [d,lesson]=await Promise.all([api('/api/dashboard'),api(`/api/lesson?date=${encodeURIComponent(state.date)}${state.lang==='all'?'':`&lang=${state.lang}`}`)]);
-      state.stats=d;state.words=lesson.words;
-    }else if(state.tab==='review'){
-      const [d,review]=await Promise.all([api('/api/dashboard'),api(`/api/reviews${state.lang==='all'?'':`?lang=${state.lang}`}`)]);
-      state.stats=d;state.words=review.words;
-    }else if(state.tab==='library'){
-      const query=new URLSearchParams({q:state.q,bookmarked:String(state.bookmarked),offset:String(state.page*100),limit:'100'});
-      if(state.lang!=='all')query.set('lang',state.lang);
-      state.words=(await api('/api/library?'+query.toString())).words;
-    }
-    render();
-  }catch(e){notice(e.message);render()}
-}
-function speak(text,lang){
-  if(!('speechSynthesis' in window)){notice('這個瀏覽器不支援語音合成');return}
-  window.speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text);u.lang=voiceLangs[lang]||'en-US';u.rate=state.speed;
-  const voices=window.speechSynthesis.getVoices();const v=voices.find(v=>v.lang.toLowerCase()===u.lang.toLowerCase())||voices.find(v=>v.lang.toLowerCase().startsWith(lang));if(v)u.voice=v;
-  window.speechSynthesis.speak(u);
-}
-$('shell').addEventListener('click',async e=>{
- const target=e.target.closest('button');if(!target)return;
- try{
-  if(target.dataset.tab){state.tab=target.dataset.tab;state.selected=0;state.revealed=false;state.lang='all';state.page=0;await reload();return}
-  if(target.dataset.lang){state.lang=target.dataset.lang;state.selected=0;state.revealed=false;state.page=0;await reload();return}
-  if(target.dataset.move){state.selected+=Number(target.dataset.move);state.revealed=false;render();return}
-  if(target.dataset.reveal){state.revealed=!state.revealed;render();return}
-  if(target.dataset.rating){
-    const word=state.words[state.selected];if(!word)return;target.disabled=true;
-    await api('/api/review',{method:'POST',body:JSON.stringify({word_id:word.id,rating:target.dataset.rating,request_id:crypto.randomUUID()})});
-    if(state.tab==='review'){state.words.splice(state.selected,1);state.selected=Math.min(state.selected,state.words.length-1)}
-    else{word.practiced=1;state.selected=Math.min(state.selected+1,state.words.length-1)}
-    state.revealed=false;state.stats=await api('/api/dashboard');render();return;
-  }
-  if(target.dataset.bookmark){
-    const enabled=target.dataset.enabled==='true';await api('/api/bookmark/'+encodeURIComponent(target.dataset.bookmark),{method:'POST',body:JSON.stringify({enabled})});
-    const word=state.words.find(w=>w.id===target.dataset.bookmark);if(word)word.bookmarked=enabled?1:0;
-    if(state.tab==='library'&&state.bookmarked){await reload()}else render();return;
-  }
-  if(target.dataset.speak){const w=state.words[state.selected];if(w)speak(target.dataset.speak==='term'?w.term:w.example,w.language);return}
-  if(target.dataset.librarySpeak){const w=state.words.find(w=>w.id===target.dataset.librarySpeak);if(w)speak(w.term,w.language);return}
-  if(target.dataset.search){state.q=$('search').value.trim();state.page=0;await reload();return}
-  if(target.dataset.page){state.page=Math.max(0,state.page+Number(target.dataset.page));await reload();return}
-  if(target.dataset.logout){await api('/api/logout',{method:'POST',body:'{}'});showLogin();return}
- }catch(err){notice(err.message)}
-});
-$('shell').addEventListener('change',async e=>{
- try{
-  if(e.target.id==='lesson-date'){state.date=e.target.value;state.selected=0;state.revealed=false;await reload()}
-  if(e.target.id==='star-only'){state.bookmarked=e.target.checked;state.page=0;await reload()}
- }catch(err){notice(err.message)}
-});
-$('shell').addEventListener('input',e=>{
- if(e.target.id==='speech-rate') {state.speed=Number(e.target.value);localStorage.setItem('speechSpeed',String(state.speed));$('speed-label').textContent=state.speed.toFixed(2)+'×'}
-});
-$('shell').addEventListener('keydown',async e=>{
- if(e.target.id==='search' && e.key==='Enter'){state.q=e.target.value.trim();state.page=0;await reload()}
-});
+function showLogin(){$('shell').hidden=true;$('login').hidden=false;$('password').value=''}
+function showApp(){$('login').hidden=true;$('shell').hidden=false}
+async function init(){try{const me=await api('/api/me');state.date=me.today;$('date-label').textContent=me.today;showApp();await reload()}catch(err){showLogin();if(!String(err.message).includes('請先登入'))toast(err.message)}}
+$('login-form').addEventListener('submit',async e=>{e.preventDefault();const btn=e.target.querySelector('button');btn.disabled=true;try{await api('/api/login',{method:'POST',body:JSON.stringify({password:$('password').value})});await init()}catch(err){alert(err.message)}finally{btn.disabled=false}});
+function filters(){return `<div class="lang-tabs">${[['all','全部'],['en','英語'],['ja','日語'],['es','西班牙語']].map(([key,label])=>`<button type="button" class="chip ${state.lang===key?'selected':''}" data-lang="${key}">${label}</button>`).join('')}</div>`}
+function heading(title,sub,right=''){return `<div class="page-heading"><div><h1>${esc(title)}</h1><p class="small muted">${esc(sub)}</p></div>${right}</div>`}
+function summary(){const s=state.stats||{new_words:0,due_reviews:0,pending:0};return `<div class="stats"><div class="stat"><strong>${s.new_words}</strong><span>今日新詞</span></div><div class="stat"><strong>${s.due_reviews}</strong><span>待複習</span></div><div class="stat"><strong>${s.pending}</strong><span>待 AI 補全</span></div></div>`}
+function score(w){if(w.status==='pending')return '<p class="small muted">待補全，尚未進入複習</p>';if(w.status==='known')return '<p class="mastery-label">✓ 已認識 · 不再排程複習</p>';return `<div class="mastery-line"><span>熟習指數</span><strong>${Number(w.mastery_percent||0)}%</strong></div><div class="mastery-track"><div class="mastery-fill" style="width:${Math.min(100,Math.max(0,Number(w.mastery_percent||0)))}%"></div></div>${w.due_date?`<p class="small muted">下次複習：${esc(w.due_date)}</p>`:''}`}
+function card(w){return `<section class="card flashcard"><div class="card-head"><span class="tag">${esc(langNames[w.language])} · ${esc(w.level)}</span><div class="row-actions"><button class="icon-btn ${w.bookmarked?'is-saved':''}" title="收藏" data-bookmark="${esc(w.id)}" data-enabled="${w.bookmarked?'false':'true'}">${w.bookmarked?'★':'☆'}</button><button class="secondary" data-edit="${esc(w.id)}">編輯</button><button class="secondary" data-known="${esc(w.id)}">已認識</button></div></div><h2 class="term">${esc(w.term)}</h2><div class="reading">${esc(w.reading)}</div><div class="pronounce-row"><button class="secondary" data-speak="term">▶ 單字發音</button>${state.revealed?'<button class="secondary" data-speak="example">▶ 朗讀例句</button>':''}</div>${state.revealed?`<div class="answer"><strong>${esc(w.meaning_zh)}</strong><p class="small muted">${esc(w.part_of_speech)}</p><p class="example">${esc(w.example)}</p><p class="translation">${esc(w.example_zh)}</p></div>`:'<div class="hint">先回想意思，再顯示答案</div>'}<div class="spacer"></div>${score(w)}<button class="outline wide" data-reveal="1">${state.revealed?'隱藏答案':'顯示答案與例句'}</button>${state.revealed?`<p class="rating-title">這個詞，你記得多少？</p><div class="rating-buttons"><button class="rating again" data-rating="again">忘記</button><button class="rating hard" data-rating="hard">困難</button><button class="rating good" data-rating="good">記得</button><button class="rating easy" data-rating="easy">容易</button></div>`:''}</section>`}
+function cardArea(){if(!state.words.length)return `<div class="empty">${state.tab==='review'?'目前沒有到期的單字。':'這一天尚無可學習的新詞。可以到 GitHub Actions 生成每日詞包。'}</div>`;state.selected=Math.max(0,Math.min(state.selected,state.words.length-1));const w=state.words[state.selected];return `<div class="toolbar"><span class="small">第 ${state.selected+1} / ${state.words.length} 詞</span><span class="small">${esc(langNames[w.language])}</span></div>${card(w)}<div class="card-nav"><button class="secondary" data-move="-1" ${state.selected===0?'disabled':''}>← 上一詞</button><button class="secondary" data-move="1" ${state.selected>=state.words.length-1?'disabled':''}>下一詞 →</button></div>`}
+function libraryItems(){if(!state.words.length)return '<div class="empty">這個條件下沒有單字。</div>';return state.words.map(w=>`<article class="list-card"><div class="line-between"><div><span class="tag light">${esc(langNames[w.language])}</span> <strong class="list-word">${esc(w.term)}</strong></div><div class="row-actions"><button class="icon-btn" data-library-speak="${esc(w.id)}">▶</button><button class="icon-btn" data-bookmark="${esc(w.id)}" data-enabled="${w.bookmarked?'false':'true'}">${w.bookmarked?'★':'☆'}</button><button class="secondary" data-edit="${esc(w.id)}">編輯</button>${w.status==='active'?`<button class="secondary" data-known="${esc(w.id)}">已認識</button>`:''}</div></div><p class="list-meaning">${esc(w.meaning_zh||'尚未填寫')}</p>${score(w)}<details><summary>讀音及雙語例句</summary><div class="details-body">${esc(w.reading)}<p>${esc(w.example)}</p><p class="muted">${esc(w.example_zh)}</p></div></details></article>`).join('')+`<div class="card-nav"><button class="secondary" data-page="-1" ${state.page===0?'disabled':''}>上一頁</button><button class="secondary" data-page="1" ${state.words.length<100?'disabled':''}>下一頁</button></div>`}
+function customPage(){return heading('我的生字','手動保存單字，或存入待補全清單並按鈕生成')+summary()+`<section class="setting-card"><h3>新增生字</h3><form id="custom-form" class="vocab-form"><label>語言<select name="language" class="select-input"><option value="en">英語</option><option value="ja">日語</option><option value="es">西班牙語</option></select></label><label>單字／詞組 <input name="term" required maxlength="120" class="search-input" placeholder="輸入遇上的生字"/></label><label>原句或語境（選填）<textarea name="context_sentence" rows="2" maxlength="1200" placeholder="貼上原句，可讓 AI 更準確理解詞義"></textarea></label><label>錄入方式<select name="mode" id="custom-mode" class="select-input"><option value="ai">AI 補全：先存入我的生字</option><option value="manual">自行填寫：直接加入複習</option></select></label><div id="manual-fields" hidden><label>繁體中文詞義（必填）<textarea name="meaning_zh" rows="2" maxlength="1000"></textarea></label><label>讀音 <input name="reading" maxlength="1000" class="search-input"/></label><label>詞性 <input name="part_of_speech" maxlength="1000" class="search-input"/></label><label>外語例句 <textarea name="example" rows="2" maxlength="1000"></textarea></label><label>例句中譯 <textarea name="example_zh" rows="2" maxlength="1000"></textarea></label><label>程度 <input name="level" maxlength="1000" class="search-input"/></label><label>主題 <input name="topic" maxlength="1000" class="search-input"/></label></div><button class="primary wide" type="submit">儲存生字</button></form></section><section class="setting-card"><div class="line-between"><div><h3>等待 AI 補全</h3><p class="small muted">每次只取清單最前面的5個生字；不會自動執行。</p></div><span class="tag">${state.words.length}詞（最多顯示150）</span></div><button class="primary wide" data-generate="1" ${!state.words.length?'disabled':''}>用 Gemini 補全前 ${Math.min(5,state.words.length)} 詞</button><p class="small muted">一次提交最多5詞，可能同時包含三種語言；生成成功後自動加入複習。請檢查 AI 回傳內容。</p>${state.words.length?state.words.map((w,i)=>`<article class="pending-item"><div><span class="small muted">${i<5?'本批':'候補'} · ${esc(langNames[w.language])}</span><strong>${esc(w.term)}</strong>${w.context_sentence?`<div class="small muted">${esc(w.context_sentence)}</div>`:''}</div><button class="secondary" data-edit="${esc(w.id)}">編輯</button></article>`).join(''):'<div class="empty">暫時沒有等待補全的生字。</div>'}</section>`}
+function settingsPage(){return heading('設定','語音及學習方式')+`<section class="setting-card"><h3>朗讀速度</h3><label for="speech-rate">${state.speed.toFixed(2)}× <span id="speed-label"></span></label><input type="range" id="speech-rate" min="0.65" max="1.2" step="0.05" value="${state.speed}"/><p>使用裝置的系統語音朗讀單字和例句。</p></section><section class="setting-card"><h3>熟習指數說明</h3><p>0–99% 是根據連續成功次數、複習間隔、難易系數和逾期天數估算的啟發式指標，不等於科學校準的記憶概率。標記「已認識」會顯示100%，但只代表你的自行判斷。</p></section><section class="setting-card"><h3>永久防重複</h3><p>詞庫和「已認識」單字會一直保留；單字經過編輯後，舊寫法亦保留在歷史排除清單中，不會被每日產詞重新加入。</p></section><section class="setting-card"><h3>登入安全</h3><p>AI 金鑰只放在 Vercel 和 GitHub 的環境變數；不會送至瀏覽器。</p><button class="outline" data-logout="1">登出</button></section>`}
+function render(){document.querySelectorAll('[data-tab]').forEach(n=>n.classList.toggle('active',n.dataset.tab===state.tab));const root=$('main-view');if(state.tab==='today')root.innerHTML=heading('今日新詞','每日英、日、西各10詞',`<input type="date" class="date-input" id="lesson-date" value="${esc(state.date)}"/>`)+summary()+filters()+cardArea();else if(state.tab==='review')root.innerHTML=heading('間隔複習','到期詞彙及新加入的自訂詞')+summary()+filters()+cardArea();else if(state.tab==='library')root.innerHTML=heading('詞庫','可搜尋正常學習、已認識及待補全的詞彙')+filters()+`<div class="search-row"><input id="search" class="search-input" value="${esc(state.q)}" placeholder="搜尋詞義或單字"/><button class="outline" data-search="1">搜尋</button></div><div class="search-row"><select id="library-status" class="select-input"><option value="active" ${state.libraryStatus==='active'?'selected':''}>學習中</option><option value="known" ${state.libraryStatus==='known'?'selected':''}>已認識</option><option value="pending" ${state.libraryStatus==='pending'?'selected':''}>待補全</option><option value="all" ${state.libraryStatus==='all'?'selected':''}>全部詞彙</option></select><label class="check-row"><input id="star-only" type="checkbox" ${state.bookmarked?'checked':''}/>僅收藏</label></div>`+libraryItems();else if(state.tab==='custom')root.innerHTML=customPage();else root.innerHTML=settingsPage()}
+async function reload(){try{if(state.tab==='today'){const [d,a]=await Promise.all([api('/api/dashboard'),api(`/api/lesson?date=${encodeURIComponent(state.date)}${state.lang==='all'?'':`&lang=${state.lang}`}`)]);state.stats=d;state.words=a.words}else if(state.tab==='review'){const [d,a]=await Promise.all([api('/api/dashboard'),api(`/api/reviews${state.lang==='all'?'':`?lang=${state.lang}`}`)]);state.stats=d;state.words=a.words}else if(state.tab==='library'){const q=new URLSearchParams({q:state.q,bookmarked:String(state.bookmarked),offset:String(state.page*100),limit:'100',status:state.libraryStatus});if(state.lang!=='all')q.set('lang',state.lang);state.words=(await api('/api/library?'+q)).words}else if(state.tab==='custom'){const [d,a]=await Promise.all([api('/api/dashboard'),api('/api/pending')]);state.stats=d;state.words=a.words}render()}catch(err){toast(err.message);render()}}
+function speak(text,lang){if(!('speechSynthesis' in window)){toast('此瀏覽器不支援語音合成');return}window.speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text);u.lang=speechCodes[lang]||'en-US';u.rate=state.speed;const voices=window.speechSynthesis.getVoices();const v=voices.find(v=>v.lang.toLowerCase()===u.lang.toLowerCase())||voices.find(v=>v.lang.toLowerCase().startsWith(lang));if(v)u.voice=v;window.speechSynthesis.speak(u)}
+function editInput(label,name,value='',multiline=false){return `<label>${esc(label)}${multiline?`<textarea name="${name}" rows="2" maxlength="1000">${esc(value)}</textarea>`:`<input class="search-input" name="${name}" maxlength="1000" value="${esc(value)}"/>`}</label>`}
+async function openEditor(id){const {word:w}=await api('/api/words/'+encodeURIComponent(id));state.editId=id;const dialog=$('editor-dialog');$('editor-content').innerHTML=`<div class="line-between"><h2>編輯詞彙</h2><button type="button" class="secondary" data-close-editor="1">關閉</button></div><p class="small muted">${esc(langNames[w.language])} · ${w.status==='known'?'已認識':w.status==='pending'?'待補全':'學習中'} · 來源：${w.source==='manual'?'個人輸入':'每日生成'}</p><form id="edit-form" class="vocab-form">${editInput('單字／詞組','term',w.term)}${editInput('繁體中文詞義','meaning_zh',w.meaning_zh,true)}${editInput('讀音','reading',w.reading)}${editInput('詞性','part_of_speech',w.part_of_speech)}${editInput('外語例句','example',w.example,true)}${editInput('例句中譯','example_zh',w.example_zh,true)}${editInput('程度','level',w.level)}${editInput('主題','topic',w.topic)}<label>遇見的原句（供 AI 參考）<textarea name="context_sentence" rows="2" maxlength="1200">${esc(w.context_sentence)}</textarea></label><button class="primary wide" type="submit">儲存修改</button>${w.status==='pending'?'<button class="outline wide" type="button" data-editor-activate="1">儲存並加入複習（不使用 AI）</button>':''}</form><div class="editor-danger"><p class="small muted">如果 AI 生成錯誤，可將詞彙退回待補全清單；如你已經認識，就標記為「已認識」，不再出現在每日學習或複習。</p><div class="editor-buttons"><button type="button" class="outline" data-requeue="${esc(w.id)}" ${w.status==='pending'?'disabled':''}>重新加入待生成</button><button type="button" class="secondary" data-known="${esc(w.id)}" ${w.status==='known'?'disabled':''}>標記為已認識</button></div></div>`;if(typeof dialog.showModal==='function')dialog.showModal();else dialog.setAttribute('open','')}
+function closeEditor(){const d=$('editor-dialog');if(d.open&&d.close)d.close();else d.removeAttribute('open');state.editId=null}
+function editorPayload(){const form=$('edit-form');const fields=['term','reading','part_of_speech','meaning_zh','example','example_zh','level','topic','context_sentence'];return Object.fromEntries(fields.map(k=>[k,form.elements[k].value.trim()]))}
+async function submitEditor(activate=false){if(!state.editId)return;const payload={...editorPayload(),activate};const r=await api('/api/words/'+encodeURIComponent(state.editId),{method:'PATCH',body:JSON.stringify(payload)});closeEditor();toast(activate?'已加入複習清單':'修改已儲存');await reload();return r.word}
+async function setKnown(id){if(!confirm('將詞彙標記為已認識？它會退出每日詞包及複習，但仍可在「詞庫 → 已認識」找到，並永久排除 AI 再生成。'))return;await api(`/api/words/${encodeURIComponent(id)}/known`,{method:'POST',body:'{}'});closeEditor();toast('已加入已認識字庫，永久排除重複生成');await reload()}
+async function requeue(id){if(!confirm('將這個詞彙退回「我的生字」待補全？目前的複習排程將重設，歷史紀錄仍保留。'))return;await api(`/api/words/${encodeURIComponent(id)}/requeue`,{method:'POST',body:'{}'});closeEditor();toast('已放回待 AI 補全清單');await reload()}
+$('shell').addEventListener('click',async e=>{const t=e.target.closest('button');if(!t)return;try{
+ if(t.dataset.tab){state.tab=t.dataset.tab;state.lang='all';state.page=0;state.selected=0;state.revealed=false;await reload();return}
+ if(t.dataset.lang){state.lang=t.dataset.lang;state.page=0;state.selected=0;state.revealed=false;await reload();return}
+ if(t.dataset.move){state.selected+=Number(t.dataset.move);state.revealed=false;render();return}
+ if(t.dataset.reveal){state.revealed=!state.revealed;render();return}
+ if(t.dataset.rating){const w=state.words[state.selected];if(!w)return;t.disabled=true;await api('/api/review',{method:'POST',body:JSON.stringify({word_id:w.id,rating:t.dataset.rating,request_id:crypto.randomUUID()})});state.revealed=false;const current=state.selected;await reload();state.selected=Math.min(current+(state.tab==='review'?0:1),Math.max(0,state.words.length-1));render();return}
+ if(t.dataset.bookmark){await api('/api/bookmark/'+encodeURIComponent(t.dataset.bookmark),{method:'POST',body:JSON.stringify({enabled:t.dataset.enabled==='true'})});await reload();return}
+ if(t.dataset.speak){const w=state.words[state.selected];if(w)speak(t.dataset.speak==='term'?w.term:w.example,w.language);return}
+ if(t.dataset.librarySpeak){const w=state.words.find(w=>w.id===t.dataset.librarySpeak);if(w)speak(w.term,w.language);return}
+ if(t.dataset.edit){await openEditor(t.dataset.edit);return}
+ if(t.dataset.known){await setKnown(t.dataset.known);return}
+ if(t.dataset.requeue){await requeue(t.dataset.requeue);return}
+ if(t.dataset.closeEditor){closeEditor();return}
+ if(t.dataset.editorActivate){await submitEditor(true);return}
+ if(t.dataset.generate){t.disabled=true;t.textContent='Gemini 正在補全（最多5詞）…';try{const out=await api('/api/pending/generate',{method:'POST',body:'{}'});toast(`已補全 ${out.generated} 詞並加入複習，可在詞庫中檢查或編輯`);await reload()}finally{t.disabled=false}return}
+ if(t.dataset.search){state.q=$('search').value.trim();state.page=0;await reload();return}
+ if(t.dataset.page){state.page=Math.max(0,state.page+Number(t.dataset.page));await reload();return}
+ if(t.dataset.logout){await api('/api/logout',{method:'POST',body:'{}'});showLogin();return}
+ }catch(err){toast(err.message)}});
+$('shell').addEventListener('submit',async e=>{if(e.target.id==='custom-form'){
+ e.preventDefault();const form=e.target,mode=form.elements.mode.value;const data={language:form.elements.language.value,term:form.elements.term.value.trim(),context_sentence:form.elements.context_sentence.value.trim(),mode};if(!data.term){toast('請輸入單字');return}
+ if(mode==='manual'){for(const k of ['meaning_zh','reading','part_of_speech','example','example_zh','level','topic'])data[k]=form.elements[k].value.trim()}
+ const button=form.querySelector('[type=submit]');button.disabled=true;try{await api('/api/words',{method:'POST',body:JSON.stringify(data)});toast(mode==='ai'?'已加入我的生字，等待手動生成':'已加入詞庫及複習清單');await reload()}catch(err){toast(err.message);button.disabled=false}
+ }else if(e.target.id==='edit-form'){e.preventDefault();try{await submitEditor(false)}catch(err){toast(err.message)}}});
+$('shell').addEventListener('change',async e=>{try{if(e.target.id==='lesson-date'){state.date=e.target.value;state.selected=0;state.revealed=false;await reload()}if(e.target.id==='star-only'){state.bookmarked=e.target.checked;state.page=0;await reload()}if(e.target.id==='library-status'){state.libraryStatus=e.target.value;state.page=0;await reload()}if(e.target.id==='custom-mode'){$('manual-fields').hidden=e.target.value!=='manual'}}catch(err){toast(err.message)}});
+$('shell').addEventListener('input',e=>{if(e.target.id==='speech-rate'){state.speed=Number(e.target.value);localStorage.setItem('speechSpeed',String(state.speed));$('speed-label').textContent=state.speed.toFixed(2)+'×'}});
+$('shell').addEventListener('keydown',async e=>{if(e.target.id==='search'&&e.key==='Enter'){e.preventDefault();state.q=e.target.value.trim();state.page=0;await reload()}});
 init();

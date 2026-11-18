@@ -7,7 +7,7 @@
   <meta name="description" content="每天英語、日語、西班牙語各10個新詞，繁體中文解釋、發音及間隔複習。" />
   <link rel="manifest" href="/static/manifest.webmanifest" />
   <link rel="icon" href="/static/icon-192.png" type="image/png" />
-  <link rel="stylesheet" href="/static/app.css" />
+  <link rel="stylesheet" href="/static/app.css?v=02" />
   <title>三語日課 · TriWords</title>
 </head>
 <body>
@@ -38,10 +38,12 @@
     <nav class="bottom-nav" aria-label="主要功能">
       <button type="button" data-tab="today" class="active"><span class="nav-symbol">⌂</span>今日</button>
       <button type="button" data-tab="review"><span class="nav-symbol">↻</span>複習</button>
+      <button type="button" data-tab="custom"><span class="nav-symbol">＋</span>生字</button>
       <button type="button" data-tab="library"><span class="nav-symbol">▤</span>詞庫</button>
       <button type="button" data-tab="settings"><span class="nav-symbol">⚙</span>設定</button>
     </nav>
+    <dialog id="editor-dialog" class="editor-dialog"><div id="editor-content"></div></dialog>
   </div>
-  <script defer src="/static/app.js"></script>
+  <script defer src="/static/app.js?v=02"></script>
 </body>
 </html>

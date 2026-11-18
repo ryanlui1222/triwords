@@ -1,181 +1,120 @@
-# 三語日課 TriWords — Gemini + GitHub + Vercel + Turso
+# TriWords v0.2 — 升級指南（GitHub + Vercel + Turso + Gemini）
 
-**版本：v0.1，2026-11-18**  ·  Android / 電腦瀏覽器均可使用  ·  **不需要 Expo、不需要 npm、不需要推播**
+這是一份以 **TriWords v0.1 + 先前 Vercel 500 修正 + Gemini 503 修正** 為基礎的完整可部署版本。只需保留現有的 GitHub Repository、Vercel Project、Turso Database；不要建立新的 Turso 資料庫。
 
-這是可以在本機執行的**第一版原始碼**。以 **Python FastAPI + HTML/CSS/JavaScript** 製作網頁介面，在 Vercel 部署。每天由 GitHub Actions 呼叫 Gemini API 產生英語、日語、西班牙語各10詞，存入 Turso。首次測試內建30個人工示範詞，**不需要 API 金鑰即可於本機操作**。
+## v0.2 新增功能
 
-**先知道限制：** 此專案尚未用你的 Turso / Gemini API / Vercel 帳戶完成實際雲端部署；需要你自行設定環境變數與金鑰。此版本需要網絡讀寫學習資料，並非離線優先 App；記憶演算法為**簡化的日粒度間隔複習**，尚非 FSRS。所有語音透過裝置的 Web Speech API 合成，並不提供真人錄音。
+- **永久防重複**：`term_registry` 以語言＋正規化詞形為唯一鍵，涵蓋每日詞、自訂詞、待生成、已認識，以及編輯前的舊詞形。每天產詞在本地比對完整歷史，再由 Turso 唯一鍵守住寫入。正規化包括大小寫、全形／半形與多餘空白；**不會保證辨認所有同義詞、日語異體寫法或西文變位**。
+- **熟習指數 0–100%**：由已評分次數（連續成功數）、複習間隔、難易系數及逾期天數計算的啟發式指標；不是科學校準的記憶保持概率。尚未複習的新詞為 0%；自行標記「已認識」顯示 100%。
+- **我的生字**：可選英、日、西三語；自行輸入詞義／雙語例句後直接進入複習，或只先輸入生字及上下文、儲存為 `pending`，稍後手動按「Gemini 補全」。
+- **AI 批次生成**：每次固定取**最早的最多 5 個待生成詞**，一次 Gemini 請求（可混合三語），不提供自動排程。只有結果格式、詞 ID、原詞、語言全數驗證通過才一次寫入。若遇 503 或輸出格式有問題，整批仍停留在待生成。
+- **編輯／已認識／重新生成**：每個詞都可編輯詞義、原文、讀音、例句等；可退回待生成（重設複習進度、保留複習歷史），或標為已認識（不再排程或被每日 AI 重新選入）；可在詞庫篩選已認識。
 
-## 0. 專案架構與檔案
+## 升級前：備份
 
-```text
-triwords/
-├─ app.py                   # Python FastAPI 網站與 API、單人登入
-├─ db.py                    # Turso / SQLite 資料庫、記憶排程
-├─ generate_daily.py        # Gemini 每日產出30詞並存入 Turso
-├─ seed_demo.py             # 本機示範30詞，不會接遠端資料庫
-├─ demo_words.json          # 30個示範詞
-├─ public/
-│  ├─ index.html            # App 畫面
-│  ├─ app.css               # 手機 / 桌面響應式排版
-│  ├─ app.js                # 單字卡、語音、收藏、詞庫等互動
-│  └─ manifest.webmanifest  # 可加到手機主畫面
-├─ .github/workflows/daily-vocabulary.yml  # 每天12:00自動產詞
-├─ pyproject.toml           # Vercel Python 自動部署
-├─ requirements.txt         # Python 網站運行所需套件
-├─ requirements-generator.txt # GitHub 產詞另外需要 google-genai
-├─ .env.example             # 環境變數範本；不會自動讀取
-└─ tests/test_app.py        # 自動測試
+**強烈建議先在 Turso 介面匯出／建立可用備份**，再更新程式。這一版會第一次連線到 Turso 時執行 `ALTER TABLE` 和建立索引，並不刪除原本的詞彙、收藏或複習紀錄。若舊資料中存在「英文大小寫不同但正規化後相同」的不同 ID，為避免誤刪複習紀錄，遷移會報錯而不自動合併；需先處理衝突。
+
+**不要先刪除任何資料表，不要重新 seed 示範詞庫到 Turso，也不要在正式資料庫執行 `seed_demo.py`。**
+
+## 1. 將 v0.2 覆蓋至現有 GitHub Repository
+
+解壓完整 ZIP，將 `triwords-v02/` 裡的檔案**內容**複製到現有 Repository 的根目錄（不是增加一層 `triwords-v02` 子資料夾）。你也可以使用另一份 `triwords-v02-updated-files.zip`，只包含本次變動的檔案。建議使用 GitHub Desktop，避免網頁上傳 `.github/` 隱藏資料夾出現 `This file is hidden`。
+
+必要更新：
+
+```
+app.py
+ db.py
+ generate_daily.py
+ seed_demo.py
+ requirements.txt
+ pyproject.toml
+ public/index.html
+ public/app.js
+ public/app.css
+ public/static/app.js
+ public/static/app.css
+ .github/workflows/daily-vocabulary.yml
 ```
 
-## 1. 先在 Windows 電腦執行，不需要 Turso / Gemini
+請特別保留原先修復 Vercel 啟動問題時新增的 `public/static/` 檔案。新版 `public/index.html` 會讀取 `/static/app.js?v=02` 和 `/static/app.css?v=02`，因此**必須同時更新 `public/static` 下的 JS 和 CSS**，否則前端可能仍執行舊版。
 
-你需要安裝 **Python 3.12** 和 **VS Code**（或你的慣用編輯器）。下載 ZIP 並解壓，開啟 PowerShell，移至解壓的資料夾，例如：
+然後按 GitHub Desktop 的 **Commit to main** → **Push origin**。Vercel 會自動觸發新的部署。
 
-```powershell
-cd C:\Users\你的帳戶\Downloads\trilingual-vercel-mvp
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-```
+## 2. Vercel 環境變數
 
-以下設定只適用於**目前這個 PowerShell 視窗**。請把示例密碼改成你自己的長密碼。`SESSION_SECRET` 須至少32個字元且不同於登入密碼：
+到 **Vercel → triwords → Settings → Environment Variables**，確認 *Production* 環境已有：
 
-```powershell
-$env:APP_PASSWORD="my-demo-password-at-least-12"
-$env:SESSION_SECRET="another-long-secret-random-string-1234567890"
-$env:APP_TIMEZONE="Asia/Hong_Kong"
-```
-
-這階段不需要設定 `TURSO_DATABASE_URL` 或 `TURSO_AUTH_TOKEN`。建立30詞示範詞包，再啟動伺服器：
-
-```powershell
-.\.venv\Scripts\python.exe seed_demo.py
-.\.venv\Scripts\python.exe -m uvicorn app:app --reload
-```
-
-開啟 **http://127.0.0.1:8000**，輸入上面的 `APP_PASSWORD`，就能使用。
-
-如果在 macOS / Linux，使用 `python3 -m venv .venv`、`.venv/bin/python`，並將 PowerShell `$env:XXX=...` 改成 `export XXX=...`。
-
-> `seed_demo.py` 會針對系統設定的 `APP_TIMEZONE` 產生**當日**示範詞包。示範詞只供測試，不會每天真正變化。要有新詞，必須連接 Gemini + Turso 並執行產詞腳本。
-
-### 可以立即測試的功能
-
-- 「今日」：30個示範詞、英日西語切換、逐張翻卡、記憶評分、切換日期（有對應詞包時）。
-- 「複習」：根據已評分詞彙的到期日顯示；新詞今日評分後，最快翌日會出現在這裏。
-- 「詞庫」：搜尋、按語言篩選、翻閱每頁100詞、收藏與只看收藏。
-- 「語音」：點選「朗讀單字」及「朗讀例句」。瀏覽器須支援 Speech Synthesis；日語、西語音色取決於你的裝置和語音包。
-- 「設定」：語速調整、登入和登出、Android 主畫面安裝提示。
-
-執行自動測試（不需連接雲端）：
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install pytest httpx
-.\.venv\Scripts\python.exe -m pytest -q tests
-```
-
-## 2. 建立獨立 Turso 資料庫
-
-**建議不要使用你其他應用現有的資料庫**。同一 Turso 帳戶可以新增一個獨立 DB，例如 `triwords`。
-
-取得：
-
-1. `TURSO_DATABASE_URL` — Turso Dashboard 的連線網址。
-2. `TURSO_AUTH_TOKEN` — 有效的資料庫授權 token。
-3. `TURSO_DRIVER` — 取決於你建立的**資料庫引擎**：
-   - **libSQL**（多數既有 DB）：設 `libsql`，URL 通常以 `libsql://` 開頭。
-   - **新的 Turso Database 引擎**：設 `turso`，使用 `turso_serverless`，URL 以 Turso Dashboard 提供的值為準。
-
-在本專案中，這兩種驅動都已列在 Python 依賴檔案內。**不要將密碼或 token 寫入公開程式檔**。
-
-資料表由 `generate_daily.py` 首次執行時建立，包含：
-
-| 資料表 | 主要內容 |
+| 變數 | 用途 |
 |---|---|
-| `vocabulary` | 語言、單字、讀音、詞性、繁體中文釋義、雙語例句、程度、主題 |
-| `daily_lessons` | 日期、語言及每天10詞的對應 |
-| `review_progress` | 間隔天數、熟悉度、下一次複習日期 |
-| `review_history` | 每次的評分紀錄（有去重 ID） |
-| `bookmarks` | 收藏詞彙 |
+| `APP_PASSWORD` | 你的登入密碼，至少12字元 |
+| `SESSION_SECRET` | 隨機字串，至少32字元 |
+| `APP_TIMEZONE` | 預設 `Asia/Hong_Kong` |
+| `TURSO_DATABASE_URL` | 現有 Turso 資料庫 URL |
+| `TURSO_AUTH_TOKEN` | 現有 Turso token |
+| `TURSO_DRIVER` | 跟之前成功使用的 `turso` 或 `libsql` 一致 |
+| **`GEMINI_API_KEY`** | **新增：網頁手動補全需要；與 GitHub Secrets 可使用同一 Key** |
+| `GEMINI_MODEL` | `gemini-3.5-flash-lite`（若你的 AI Studio 顯示可用） |
 
-## 3. 準備 Gemini 免費 API 金鑰
+**不要把真正的 API Key 或密碼上傳到 GitHub。** `.env.example` 只是示範檔案。
 
-1. 開啟 **https://aistudio.google.com/apikey**，以自己的 Google 帳戶進入並建立 API Key。
-2. 目前預設文字生成模型為 `gemini-2.5-flash-lite`。
-3. 每天為英、日、西各呼叫一次 Gemini，請求每種語言15個候選詞，程式經去重及基本欄位檢查後各取10個。
-4. 英語預設 C1–C2、日語 N2–N1、西班牙語 A2–B1。可自行修改 `generate_daily.py` 裏的 `LANGS` 字典與提示詞。
+若新增了 `GEMINI_API_KEY`，**必須重新 Redeploy**，才會套用到新部署。GitHub Actions Secrets 是另一個環境：即使每日詞生成成功，也不代表 Vercel 已取得 Gemini Key。
 
-**重要：** 免費 API 額度、可用地區、模型名稱都可能變更；登入 AI Studio 確認你的帳戶實際免費配額。生成結果可能有讀音、翻譯、語法錯誤，初期應抽樣檢查。免費 API 的資料處理條款可能允許服務商使用輸入和輸出改進服務，不要傳送私人或敏感文字。
+`requirements.txt` 與 `pyproject.toml` 已加入 `google-genai`，供 Vercel 的 Python API 手動補全使用。GitHub Actions 依然沿用 `requirements-generator.txt`，每日30詞腳本有自己的環境變數。
 
-## 4. 建立 GitHub 私人 Repository 並自動生成
+## 3. 自動升級 Turso（不刪舊資料）
 
-1. 前往 GitHub 新建 **Private repository**，例如 `triwords-daily`。
-2. 將 ZIP 解壓後的**所有檔案和隱藏 `.github/` 資料夾**上傳。切勿上傳 `.env`、本機 SQLite `.db` 檔或任何金鑰。
-3. 前往 Repository → **Settings → Secrets and variables → Actions → Secrets → New repository secret**，新增：
-   - `TURSO_DATABASE_URL`
-   - `TURSO_AUTH_TOKEN`
-   - `GEMINI_API_KEY`
-4. 在同一頁的 **Variables** 分頁設 `TURSO_DRIVER`，值為 `libsql` 或 `turso`。
-5. 前往 **Actions → 每日生成三語詞彙 → Run workflow**，第一次**手動執行**，查看日誌是否顯示 `en saved 10詞`、`ja saved 10詞`、`es saved 10詞`。
+在新版部署完成後，開啟網站、登入、點擊「詞庫」或「我的生字」。首次讀取資料的 API 會執行 `db.init_db()`：
 
-`.github/workflows/daily-vocabulary.yml` 已包含排程：
+1. 保留舊有 `vocabulary`、`daily_lessons`、`review_progress`、`review_history`、`bookmarks`。
+2. 為 `vocabulary` 新增 `source`、`status`、`normalized_term`、`context_sentence`、`known_at`、`updated_at`。
+3. 建立 `term_registry`，把**所有舊詞**加進永久排除清單。
+4. 建立唯一索引，阻止相同語言、相同正規化詞形重覆寫入。
+5. 記錄 schema_version=2，之後的部署不需要再次全庫回填。
 
-```yaml
-schedule:
-  - cron: '0 12 * * *'
-    timezone: 'Asia/Hong_Kong'
+若出現資料庫錯誤，請在 Vercel Runtime Logs 查看 Traceback；不要清空資料表嘗試修復。
+
+## 4. 在手機測試功能
+
+1. **新增手動詞**：進入「生字」→ 選語言、輸入單字、選「自行填寫」→ 填中文釋義等 → 儲存。它會立即進入「複習」頁。
+2. **新增待 AI 補全**：進入「生字」→ 選「AI 補全」，只輸入原詞（可附原句）→ 儲存；待處理清單會新增一項，**不會自動向 Gemini 發送請求**。
+3. **手動生成前五詞**：累積幾個後，點「用 Gemini 補全前 N 詞」（N≤5）。生成成功後移入「詞庫 → 學習中」，同時排入「複習」。可以只提交1個，也可以提交5個。遇503時會保留待處理詞。
+4. **編輯**：在今日／複習單字卡或詞庫按「編輯」。修改詞義等後儲存。編輯前的舊詞形仍會記入永久排除清單。
+5. **退回待生成**：在編輯視窗選「重新加入待生成」。它暫時不再參加複習，原有 `review_progress` 重設但 `review_history` 不刪。待 AI 補全後可重新學習。
+6. **標記已認識**：在編輯視窗選「標記為已認識」，它從正常學習及待複習中退出。到「詞庫」的狀態選單切換為「已認識」便能找到它。
+7. **檢查永久去重**：試著再次輸入同語言已存在的單字（包括大小寫差別），應收到409提示而不會產生第二筆。
+8. **熟習指數**：在「複習」評分後，單字卡和詞庫會顯示新的百分比；它不是記憶概率。
+
+## 5. GitHub Actions 每日30詞
+
+新版 `generate_daily.py` 會查詢 **Turso 全歷史保留詞形**，而非舊版僅檢查最近400詞。AI 仍只收到精簡的最近180個詞作提示；Python 對完整保留集合過濾，並在不足10個時最多再生成5輪候選。資料庫唯一鍵提供最後一道保護。
+
+「已認識」、「手動新增」、「待補全」以及「改名之前的拼法」都會在全歷史排除清單內。GitHub Action 重新執行時已有10個的語言會跳過；若出現 Gemini 503，沿用有限次重試。
+
+## 6. 疑難排解
+
+| 症狀 | 原因與處理 |
+|---|---|
+| 頁面仍是舊版 | 確認 `public/static/app.js`、`public/static/app.css` 有一起上傳，並在 Vercel 最新 Production Deploy 部署成功；手機重新載入 |
+| 點生成出現「Vercel 尚未設定 GEMINI_API_KEY」 | 到 Vercel 的 **Production** 環境變數新增並 Redeploy |
+| 503 Gemini 暫時過載 | 請稍後再按生成；待補全單字會保留，不會扣掉你的待生成記錄 |
+| 409 詞彙已存在 | 這是預期防重複功能；請在詞庫搜尋原詞，而不是重複新增 |
+| 500 或 RuntimeError | 到 Vercel Runtime Logs 查看；不要直接刪除資料庫 |
+| 舊詞衝突導致遷移中止 | 正規化後有不同 ID 重複；先備份，再依錯誤訊息人工檢視，避免遺失複習歷史 |
+
+## 開發與測試
+
+建議 Python 3.12：
+
+```bash
+pip install -r requirements-generator.txt
+python seed_demo.py
+python -m unittest discover -s tests -v
+uvicorn app:app --reload
 ```
 
-代表**香港時間每日中午12:00嘗試開始**，不是給手機發通知。GitHub Actions 可能延遲，也可能因額度、停用、API 配額等原因失敗。你可隨時按 `Run workflow` 補跑；已完整產生10詞的語言會自動略過，避免重複加入同日詞包。
+本地示範需要設定 `APP_PASSWORD`（≥12字元）和 `SESSION_SECRET`（≥32字元），不會連接正式 Turso，除非你自行設定了 Turso 環境變數。
 
-**如果你希望以英國當地日期為準**，請把 workflow 的 `timezone` 和 `APP_TIMEZONE` 都改成 `Europe/London`（英國夏令時間會自動處理），Vercel 同樣設為 `Europe/London`。不要只改其中一處，否則頁面與產詞腳本可能認定不同的「今天」。
+**驗證範圍**：本專案在交付前通過 Python 11項自動測試及前端 JavaScript 語法檢查。未在你的 Vercel/Turso/Gemini 正式帳戶執行整合測試；也未完成可運行的真實瀏覽器自動化點擊測試。部署後請按第4節手動檢查。
 
-## 5. 部署到 Vercel（毋須 Node.js）
-
-1. 在 Vercel 選 **Add New → Project**，Import 剛建立的 GitHub repository。這應是一個**新專案**，不必改動你其他應用的 Vercel 設定。
-2. Repository Root Directory 選專案根目錄；`pyproject.toml` 的 `[tool.vercel] entrypoint = "app:app"` 指明 FastAPI 進入點。
-3. 在 **Environment Variables** 加入以下值，Production 至少需要：
-
-| Key | 用途 |
-|---|---|
-| `APP_PASSWORD` | 自己設定的登入密碼，**至少12字元** |
-| `SESSION_SECRET` | 另一串**至少32字元**的隨機私密值 |
-| `APP_TIMEZONE` | `Asia/Hong_Kong` 或 `Europe/London` |
-| `TURSO_DATABASE_URL` | Turso 網址 |
-| `TURSO_AUTH_TOKEN` | Turso token |
-| `TURSO_DRIVER` | `libsql` 或 `turso` |
-
-4. **不必**把 `GEMINI_API_KEY` 放到 Vercel。AI 生成只在 GitHub Actions 執行，金鑰保存在 GitHub Secrets。
-5. 按 **Deploy**，完成後開啟 Vercel 提供的 HTTPS 網址。登入後應可看到已透過 GitHub Actions 生成的詞包。
-
-如果部署後詞庫是空的，先檢查 GitHub Actions 是否成功寫入正確的 Turso 資料庫；**Vercel 和 GitHub 的 `TURSO_DATABASE_URL` 必須相同**。
-
-若本機執行時遇到 `ModuleNotFoundError`，在同一 PowerShell 視窗重新執行 `.\.venv\Scripts\python.exe -m pip install -r requirements.txt`。
-
-## 6. Android 上使用
-
-用 Android Chrome 開啟 Vercel HTTPS 網址，點選選單中的 **「安裝應用程式」或「加入主畫面」**（選項因 Chrome 版本而異）。日後可點主畫面圖示進入，介面會自動調整手機尺寸。
-
-這**不是原生 APK**；其語音朗讀取決於瀏覽器和系統可用聲音。本版也**尚未實作可離線寫入並同步 Turso 的功能**，請在連網時使用。
-
-## 7. 記憶排程 v0.1（非 FSRS）
-
-本版記錄每個詞的評分、熟悉度係數與複習間隔。初學後，「忘記」及「困難」通常隔日再看，「記得」約1日，「容易」4日；後續視評分調整間隔。為了讓部署簡單，精確到「日期」，不處理同日數分鐘後的複習，也沒有採用 FSRS 算法。你可以在 `db.py` 的 `calculate_next()` 改動規則。每次評分會記錄一個隨機事件 ID，避免相同請求重複計數。
-
-## 8. 安全與現階段限制
-
-- **金鑰不在前端：** Turso token 和 Gemini Key 只能保存在 GitHub Secrets、Vercel 環境變數，不能貼到 HTML/JS 或提交 repository。
-- **單人使用者：** 本版以長密碼和經 HMAC 簽署的 HttpOnly Cookie 保護學習 API。**不是完整的多人帳號系統**，亦未加入登入限速或兩步驗證。若要公開給他人使用，必須升級驗證設計。
-- **不會使用本地 SQLite 作 Vercel 正式資料庫：** Vercel 環境需要提供 Turso URL；本機 SQLite 只供測試。
-- **產詞檢查仍有限：** 程式驗證欄位完整和避免重複詞，但**無法保證 AI 翻譯與讀音準確**。日語讀音、詞形及西語動詞變化尤應抽查。
-- **零額外費用是目標，不是保證：** Gemini 免費額度、Turso、GitHub Actions 與 Vercel Hobby 都有政策和限額。請在自己帳戶確認最新方案。
-- **首次驗證：** 已在本機使用 Python TestClient 驗證登入、30詞、詞庫分頁、評分、收藏與安全檢查；未連接你的雲端帳戶進行端對端測試。
-
-## 官方文件
-
-- [Vercel FastAPI 部署](https://vercel.com/docs/frameworks/backend/fastapi)
-- [Turso Python SDK Quickstart](https://docs.turso.tech/sdk/python/quickstart)
-- [Gemini API Pricing](https://ai.google.dev/gemini-api/docs/pricing)
-- [Gemini Python SDK](https://googleapis.github.io/python-genai/)
-- [GitHub Actions 排程](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#onschedule)
-- [瀏覽器朗讀 API](https://developer.mozilla.org/en-US/docs/Web/API/SpeechSynthesis)
+**注意回退**：升級後，**不要僅把每日生成腳本回退至 v0.1**，因為新唯一索引和資料表已生效。若必須回退，應保留新版資料庫寫入層和新版產詞腳本，或由升級前的資料庫備份完整還原。
