@@ -2,10 +2,13 @@ name: 每日生成三語詞彙
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 12 * * *'
+    - cron: '0 12,18,22 * * *'
       timezone: 'Asia/Hong_Kong'
 permissions:
   contents: read
+concurrency:
+  group: triwords-daily-generation
+  cancel-in-progress: false
 jobs:
   generate:
     runs-on: ubuntu-latest
@@ -24,5 +27,7 @@ jobs:
           TURSO_DRIVER: ${{ vars.TURSO_DRIVER || 'libsql' }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.5-flash-lite' }}
+          GEMINI_FALLBACK_MODEL: ${{ vars.GEMINI_FALLBACK_MODEL || 'gemini-3.8-flash' }}
+          GEMINI_ATTEMPTS_PER_MODEL: '2'
           APP_TIMEZONE: Asia/Hong_Kong
         run: python generate_daily.py
