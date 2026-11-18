@@ -87,9 +87,37 @@ def init_db():
     _READY=True
 
 def ensure_ready():
-    if not _READY:
-        with _LOCK:
-            if not _READY:init_db()
+    """Fast readiness check for serverless invocations.
+
+    The v0.2 migration already created all tables. On a new Vercel
+    instance, check the schema version with ONE remote statement instead
+    of rerunning seven CREATE TABLE statements for every cold instance.
+    If the schema has not yet been migrated, run the original safe upgrade.
+    """
+    global _READY
+    if _READY:
+        return
+    with _LOCK:
+        if _READY:
+            return
+        try:
+            with connection() as c:
+                row = c.execute(
+                    "SELECT value FROM schema_metadata WHERE key='schema_version'"
+                ).fetchone()
+        except Exception as exc:
+            # Only an absent metadata table is a migration signal.
+            # Authentication/network/SQL errors must not trigger DDL attempts.
+            msg = str(exc).lower()
+            if not any(fragment in msg for fragment in (
+                'no such table', 'table not found', 'does not exist', 'unknown table'
+            )):
+                raise
+        else:
+            if row and row[0] == '2':
+                _READY = True
+                return
+        init_db()
 
 def reserve(c,lang,term,wid):
     key=normalize(term)
@@ -264,10 +292,26 @@ def review_word(wid,rating,request_id,today):
     return {'word_id':wid,'due_date':due,'interval_days':interval,'duplicate':False}
 
 def today_stats(today):
+    """Return the five dashboard counters with ONE database round-trip.
+
+    Previously these independent COUNT queries were sent as five
+    successive remote requests, which was expensive over Turso HTTP.
+    The SQL subqueries preserve the existing v0.2 semantics.
+    """
+    statement = """
+    SELECT
+      (SELECT count(*) FROM daily_lessons d JOIN vocabulary v ON v.id=d.word_id
+         WHERE d.lesson_date=? AND v.status='active'),
+      (SELECT count(*) FROM review_progress r JOIN vocabulary v ON v.id=r.word_id
+         WHERE r.due_date<=? AND v.status='active'),
+      (SELECT count(DISTINCT h.word_id) FROM review_history h
+         JOIN daily_lessons d ON d.word_id=h.word_id WHERE d.lesson_date=?),
+      (SELECT count(*) FROM vocabulary WHERE status='pending'),
+      (SELECT count(*) FROM vocabulary WHERE status='known')
+    """
     with connection() as c:
-        new=c.execute("SELECT count(*) FROM daily_lessons d JOIN vocabulary v ON v.id=d.word_id WHERE d.lesson_date=? AND v.status='active'",(today,)).fetchone()[0]
-        due=c.execute("SELECT count(*) FROM review_progress r JOIN vocabulary v ON v.id=r.word_id WHERE r.due_date<=? AND v.status='active'",(today,)).fetchone()[0]
-        done=c.execute('SELECT count(DISTINCT h.word_id) FROM review_history h JOIN daily_lessons d ON d.word_id=h.word_id WHERE d.lesson_date=?',(today,)).fetchone()[0]
-        pending=c.execute("SELECT count(*) FROM vocabulary WHERE status='pending'").fetchone()[0]
-        known=c.execute("SELECT count(*) FROM vocabulary WHERE status='known'").fetchone()[0]
-    return {'new_words':new,'due_reviews':due,'studied_today':done,'pending':pending,'known':known}
+        row = c.execute(statement, (today, today, today)).fetchone()
+    return dict(zip(
+        ('new_words', 'due_reviews', 'studied_today', 'pending', 'known'),
+        row
+    ))
